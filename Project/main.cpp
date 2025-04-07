@@ -109,7 +109,6 @@ bool isNumber(char* str)
     }
     return true;
 }
-
 char* subString(char* realStr, int l, int r)
 {
     int i;
