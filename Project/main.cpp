@@ -1,177 +1,167 @@
-#include <fstream>
 #include <iostream>
-#include <stdlib.h>
-#include <string.h>
-#include <ctype.h>
+#include <string>
+#include <vector>
+#include <cctype>
+#include <unordered_set>
+#include <iomanip>
 
 using namespace std;
 
-bool isPunctuator(char ch)
-{
-    if (ch == ' ' || ch == '+' || ch == '*' || ch == '-' ||
-        ch == '<' || ch == ',' || ch == '{' || ch == '}' ||
-        ch == '/' || ch == '=' || ch == '(' || ch == ')' ||
-        ch == '[' || ch == ']' || ch == '.' || ch == '>' ||
-        ch == '&' || ch == '|')
-    {
-        return true;
-    }
-    return false;
+unordered_set<string> symbolTable;
+
+bool isPunctuator(char ch) {
+    return ispunct(ch) && ch != '_';
 }
 
-bool validIdentifier(char* str)
-{
-    if (str[0] == '0' || str[0] == '1' || str[0] == '2' ||
-        str[0] == '3' || str[0] == '4' || str[0] == '5' ||
-        str[0] == '6' || str[0] == '7' || str[0] == '8' ||
-        str[0] == '9' || isPunctuator(str[0]) == true)
-    {
-        return false;
-    }
-    int i, len = strlen(str);
-    if (len == 1)
-    {
-        return true;
-    }
-    else
-    {
-        for (i = 1; i < len; i++)
-        {
-            if (isPunctuator(str[i]) == true)
-            {
-                return false;
-            }
+bool isOperatorChar(char ch) {
+    return ch == '+' || ch == '-' || ch == '*' || ch == '/' || ch == '>' ||
+           ch == '<' || ch == '=' || ch == '&' || ch == '|';
+}
+
+bool isCompoundOperator(string s) {
+    return s == "++" || s == "--" || s == "==" || s == ">=" || s == "<=" ||
+           s == "!=" || s == "&&" || s == "||";
+}
+
+bool isKeyword(const string& str) {
+    static unordered_set<string> keywords = {
+        "if", "else", "while", "do", "break", "continue", "int", "double", "float",
+        "return", "char", "case", "long", "short", "typedef", "switch", "unsigned",
+        "void", "static", "struct", "sizeof", "volatile", "enum", "const", "union",
+        "extern", "bool"
+    };
+    return keywords.count(str) > 0;
+}
+
+bool isNumber(const string& str) {
+    int dots = 0;
+    for (size_t i = 0; i < str.length(); i++) {
+        if (str[i] == '.') {
+            dots++;
+            if (dots > 1) return false;
         }
+        else if (!isdigit(str[i])) {
+            return false;
+        }
+    }
+    return !str.empty();
+}
+
+bool validIdentifier(const string& str) {
+    if (str.empty() || isdigit(str[0]) || isPunctuator(str[0]))
+        return false;
+    for (char ch : str) {
+        if (!isalnum(ch) && ch != '_')
+            return false;
     }
     return true;
 }
 
-bool isOperator(char ch)
-{
-    if (ch == '+' || ch == '-' || ch == '*' || ch == '/' ||
-        ch == '>' || ch == '<' || ch == '=' || ch == '|' || ch == '&')
-    {
-        return true;
-    }
-    return false;
-}
-
-bool isKeyword(char *str)
-{
-    if (!strcmp(str, "if") || !strcmp(str, "else") ||
-        !strcmp(str, "while") || !strcmp(str, "do") ||
-        !strcmp(str, "break") || !strcmp(str, "continue") ||
-        !strcmp(str, "int") || !strcmp(str, "double") ||
-        !strcmp(str, "float") || !strcmp(str, "return") ||
-        !strcmp(str, "char") || !strcmp(str, "case") ||
-        !strcmp(str, "long") || !strcmp(str, "short") ||
-        !strcmp(str, "typedef") || !strcmp(str, "switch") ||
-        !strcmp(str, "unsigned") || !strcmp(str, "void") ||
-        !strcmp(str, "static") || !strcmp(str, "struct") ||
-        !strcmp(str, "sizeof") || !strcmp(str, "volatile") ||
-        !strcmp(str, "enum") || !strcmp(str, "const") ||
-        !strcmp(str, "union") || !strcmp(str, "extern") ||
-        !strcmp(str, "bool"))
-    {
-        return true;
-    }
-    else
-    {
-        return false;
+void insertToSymbolTable(const string& str) {
+    if (validIdentifier(str) && !isKeyword(str)) {
+        symbolTable.insert(str);
     }
 }
 
-bool isNumber(char* str)
-{
-    int i, len = strlen(str), numOfDecimal = 0;
-    if (len == 0)
-    {
-        return false;
+void parse(const string& input) {
+    int len = input.length();
+    string token = "";
+    for (int i = 0; i < len;) {
+        // Handle compound operators
+        if (isOperatorChar(input[i])) {
+            if (i + 1 < len && isOperatorChar(input[i + 1])) {
+                string op = string(1, input[i]) + input[i + 1];
+                if (isCompoundOperator(op)) {
+                    cout << op << " : is an Operator" << endl;
+                    i += 2;
+                    continue;
+                }
+            }
+            cout << input[i] << " : is an Operator" << endl;
+            i++;
+        }
+        // Punctuation separates tokens
+        else if (isPunctuator(input[i])) {
+            if (!token.empty()) {
+                if (isKeyword(token)) {
+                    cout << token << " : is a Keyword" << endl;
+                }
+                else if (isNumber(token)) {
+                    cout << token << " : is a Number" << endl;
+                }
+                else if (validIdentifier(token)) {
+                    cout << token << " : is a valid Identifier" << endl;
+                    insertToSymbolTable(token);
+                }
+                else {
+                    cout << token << " : is not a valid Identifier" << endl;
+                }
+                token.clear();
+            }
+            i++;
+        }
+        // Handle space, only break token if next char is punctuator or space is followed by operator/punct
+        else if (isspace(input[i])) {
+            int j = i + 1;
+            while (j < len && isspace(input[j])) j++;
+            if (j < len && isPunctuator(input[j])) {
+                if (!token.empty()) {
+                    if (isKeyword(token)) {
+                        cout << token << " : is a Keyword" << endl;
+                    }
+                    else if (isNumber(token)) {
+                        cout << token << " : is a Number" << endl;
+                    }
+                    else if (validIdentifier(token)) {
+                        cout << token << " : is a valid Identifier" << endl;
+                        insertToSymbolTable(token);
+                    }
+                    else {
+                        cout << token << " : is not a valid Identifier" << endl;
+                    }
+                    token.clear();
+                }
+            }
+            else {
+                token += ""; // continue collecting spaced token
+            }
+            i++;
+        }
+        else {
+            token += input[i];
+            i++;
+        }
     }
-    for (i = 0; i < len; i++)
-    {
-        if (numOfDecimal > 1 && str[i] == '.')
-        {
-            return false;
-        }
-        else if (str[i] == '.')
-        {
-            numOfDecimal++;
-        }
-        if ((str[i] != '0' && str[i] != '1' && str[i] != '2' &&
-             str[i] != '3' && str[i] != '4' && str[i] != '5' &&
-             str[i] != '6' && str[i] != '7' && str[i] != '8' &&
-             str[i] != '9' && str[i] != '.') ||
-            (str[i] == '-' && i > 0))
-        {
-            return false;
-        }
-    }
-    return true;
-}
-char* subString(char* realStr, int l, int r)
-{
-    int i;
-    char* str = (char*)malloc(sizeof(char) * (r - l + 2));
 
-    for (i = l; i <= r; i++)
-    {
-        str[i - l] = realStr[i];
+    // Handle last token
+    if (!token.empty()) {
+        if (isKeyword(token)) {
+            cout << token << " : is a Keyword" << endl;
+        }
+        else if (isNumber(token)) {
+            cout << token << " : is a Number" << endl;
+        }
+        else if (validIdentifier(token)) {
+            cout << token << " : is a valid Identifier" << endl;
+            insertToSymbolTable(token);
+        }
+        else {
+            cout << token << " : is not a valid Identifier" << endl;
+        }
     }
-    str[r - l + 1] = '\0';
-    return str;
-}
 
-void parse(char* str)
-{
-    int left = 0, right = 0;
-    int len = strlen(str);
-    while (right <= len && left <= right) {
-        if (right < len && isPunctuator(str[right]) == false)
-        {
-            right++;
-        }
-        if (right < len && isPunctuator(str[right]) == true && left == right)
-        {
-            if (isOperator(str[right]) == true)
-            {
-                std::cout << str[right] << ": is an Operator" << endl;
-            }
-            right++;
-            left = right;
-        }
-        else if ((right < len && isPunctuator(str[right]) == true && left != right)
-                || (right == len && left != right))
-        {
-            char* sub = subString(str, left, right - 1);
-            if (isKeyword(sub) == true)
-            {
-                cout << sub << ": is a Keyword" << endl;
-            }
-            else if (isNumber(sub) == true)
-            {
-                cout << sub << ": is a Number" << endl;
-            }
-            else if (validIdentifier(sub) == true
-                    && isPunctuator(str[right - 1]) == false)
-            {
-                cout << sub << ": is a valid Identifier" << endl;
-            }
-            else if (validIdentifier(sub) == false
-                    && isPunctuator(str[right - 1]) == false)
-            {
-                cout << sub << ": is not a valid identifier" << endl;
-            }
-            left = right;
-        }
+    // Print Symbol Table
+    cout << "\nSymbol Table:\n";
+    int id = 1;
+    for (const auto& sym : symbolTable) {
+        cout << setw(2) << id++ << "  " << sym << endl;
     }
 }
 
-int main()
-{
-    char c[1000];
+int main() {
+    string input;
     cout << "Enter your code: ";
-    cin.getline(c, 1000);
-    parse(c);
+    getline(cin, input);
+    parse(input);
     return 0;
 }
