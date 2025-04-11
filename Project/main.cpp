@@ -1,167 +1,347 @@
 #include <iostream>
 #include <string>
 #include <vector>
-#include <cctype>
 #include <unordered_set>
-#include <iomanip>
-
+#include <unordered_map>
+#include <cctype>
+#include <fstream>
+#include <optional>
+#include <sstream>  // Fix: Added missing header for stringstream
 using namespace std;
 
-unordered_set<string> symbolTable;
+enum class TokenType {
+    KEYWORD, IDENTIFIER, NUMBER, STRING, OPERATOR, DELIMITER,
+    INDENT, DEDENT, NEWLINE, ENDOFFILE
+};
 
-bool isPunctuator(char ch) {
-    return ispunct(ch) && ch != '_';
-}
+struct Token {
+    string lexeme;
+    TokenType type;
+    int line;
+    int column;
+};
 
-bool isOperatorChar(char ch) {
-    return ch == '+' || ch == '-' || ch == '*' || ch == '/' || ch == '>' ||
-           ch == '<' || ch == '=' || ch == '&' || ch == '|';
-}
+struct LexicalError {
+    string message;
+    int line;
+    int column;
+};
 
-bool isCompoundOperator(string s) {
-    return s == "++" || s == "--" || s == "==" || s == ">=" || s == "<=" ||
-           s == "!=" || s == "&&" || s == "||";
-}
+class SymbolTable {
+private:
+    unordered_map<string, int> symbols;
+    int current_id = 1;
 
-bool isKeyword(const string& str) {
-    static unordered_set<string> keywords = {
-        "if", "else", "while", "do", "break", "continue", "int", "double", "float",
-        "return", "char", "case", "long", "short", "typedef", "switch", "unsigned",
-        "void", "static", "struct", "sizeof", "volatile", "enum", "const", "union",
-        "extern", "bool"
+public:
+    int addIdentifier(const string& identifier, int line) {
+        if (!symbols.count(identifier)) {
+            symbols[identifier] = current_id++;
+        }
+        return symbols[identifier];
+    }
+
+    optional<int> lookup(const string& identifier) const {
+        auto it = symbols.find(identifier);
+        return it != symbols.end() ? optional<int>(it->second) : nullopt;
+    }
+};
+
+class PythonLexer {
+private:
+    string source;
+    size_t pos = 0;
+    int line = 1;
+    int column = 1;
+    SymbolTable symbolTable;
+    vector<Token> tokens;
+    vector<LexicalError> errors;
+
+    const unordered_set<string> keywords = {
+        "False", "None", "True", "and", "as", "assert", "async", "await",
+        "break", "class", "continue", "def", "del", "elif", "else", "except",
+        "finally", "for", "from", "global", "if", "import", "in", "is",
+        "lambda", "nonlocal", "not", "or", "pass", "raise", "return",
+        "try", "while", "with", "yield"
     };
-    return keywords.count(str) > 0;
-}
 
-bool isNumber(const string& str) {
-    int dots = 0;
-    for (size_t i = 0; i < str.length(); i++) {
-        if (str[i] == '.') {
-            dots++;
-            if (dots > 1) return false;
+    char current() const { return pos < source.size() ? source[pos] : '\0'; }
+    char peek() const { return pos + 1 < source.size() ? source[pos + 1] : '\0'; }
+
+    void advance() {
+        if (current() == '\n') {
+            line++;
+            column = 1;
+        } else {
+            column++;
         }
-        else if (!isdigit(str[i])) {
-            return false;
-        }
+        pos++;
     }
-    return !str.empty();
-}
 
-bool validIdentifier(const string& str) {
-    if (str.empty() || isdigit(str[0]) || isPunctuator(str[0]))
-        return false;
-    for (char ch : str) {
-        if (!isalnum(ch) && ch != '_')
-            return false;
+    void addToken(const string& lexeme, TokenType type) {
+        tokens.push_back({ lexeme, type, line, column - static_cast<int>(lexeme.length()) });
     }
-    return true;
-}
 
-void insertToSymbolTable(const string& str) {
-    if (validIdentifier(str) && !isKeyword(str)) {
-        symbolTable.insert(str);
+    void addError(const string& message) {
+        errors.push_back({ message, line, column });
     }
-}
 
-void parse(const string& input) {
-    int len = input.length();
-    string token = "";
-    for (int i = 0; i < len;) {
-        // Handle compound operators
-        if (isOperatorChar(input[i])) {
-            if (i + 1 < len && isOperatorChar(input[i + 1])) {
-                string op = string(1, input[i]) + input[i + 1];
-                if (isCompoundOperator(op)) {
-                    cout << op << " : is an Operator" << endl;
-                    i += 2;
-                    continue;
-                }
+    bool isOperatorChar(char c) {
+        static const string opChars = "+-*/%=&|<>!^~";
+        return opChars.find(c) != string::npos;
+    }
+
+    bool isDelimiter(char c) {
+        static const string delimiters = ":,;()[]{}@";
+        return delimiters.find(c) != string::npos;
+    }
+
+    void processNumber() {
+        string num;
+        bool hasDot = false;
+        bool valid = true;
+
+        // Allow digits, a single dot, and valid underscores
+        while (isdigit(current()) || current() == '.' || current() == '_') {
+            if (current() == '.') {
+                if (hasDot) break;
+                hasDot = true;
             }
-            cout << input[i] << " : is an Operator" << endl;
-            i++;
+            num += current();
+            advance();
         }
-        // Punctuation separates tokens
-        else if (isPunctuator(input[i])) {
-            if (!token.empty()) {
-                if (isKeyword(token)) {
-                    cout << token << " : is a Keyword" << endl;
-                }
-                else if (isNumber(token)) {
-                    cout << token << " : is a Number" << endl;
-                }
-                else if (validIdentifier(token)) {
-                    cout << token << " : is a valid Identifier" << endl;
-                    insertToSymbolTable(token);
-                }
-                else {
-                    cout << token << " : is not a valid Identifier" << endl;
-                }
-                token.clear();
+
+        // Check for invalid underscore placement
+        if (num.front() == '_' || num.back() == '_' || num.find("") != string::npos) {
+            addError("Invalid underscore placement in number: " + num);
+            valid = false;
+        }
+
+        // Check for valid numeric suffix
+        if (current() == 'j' || current() == 'J') {  // Complex numbers
+            num += current();
+            advance();
+            addError("Complex number error: " + num);
+            valid = false;
+        }
+        else if (isalpha(current())) {  // Invalid suffix after a number
+            valid = false;
+            string invalid = num;
+            while (isalnum(current()) || current() == '_') {
+                invalid += current();
+                advance();
             }
-            i++;
+            addError("Invalid identifier (identifiers can't start with a number): " + invalid);
         }
-        // Handle space, only break token if next char is punctuator or space is followed by operator/punct
-        else if (isspace(input[i])) {
-            int j = i + 1;
-            while (j < len && isspace(input[j])) j++;
-            if (j < len && isPunctuator(input[j])) {
-                if (!token.empty()) {
-                    if (isKeyword(token)) {
-                        cout << token << " : is a Keyword" << endl;
-                    }
-                    else if (isNumber(token)) {
-                        cout << token << " : is a Number" << endl;
-                    }
-                    else if (validIdentifier(token)) {
-                        cout << token << " : is a valid Identifier" << endl;
-                        insertToSymbolTable(token);
-                    }
-                    else {
-                        cout << token << " : is not a valid Identifier" << endl;
-                    }
-                    token.clear();
+
+        if (valid) {
+            addToken(num, TokenType::NUMBER);
+        }
+    }
+
+    void processString(char quote) {
+        string str;
+        int startLine = line;
+        int startColumn = column;
+        advance(); // Skip the initial quote
+
+        // Check for triple quotes
+        bool isTriple = false;
+        if (current() == quote && peek() == quote) {
+            isTriple = true;
+            advance(); // Skip second quote
+            advance(); // Skip third quote
+        }
+        if (current() == '\\') {
+            advance();
+
+            if (current() != 'n' && current() != 't' && current() != '\\' && current() != '"' && current() != '\'') {
+                addError("Invalid escape sequence: \\" + string(1, current()));
+            }
+        }
+
+        if (isTriple) {
+            // Process a triple-quoted string, which can include newlines.
+            while (true) {
+                if (current() == '\0') {
+                    addError("Unterminated triple-quoted string starting at line " +
+                             to_string(startLine) + " column " + to_string(startColumn));
+                    return;
                 }
+                // Check if the next three characters match the closing triple quotes
+                if (current() == quote && peek() == quote && (pos + 2 < source.size() && source[pos + 2] == quote)) {
+                    advance(); // Skip first closing quote
+                    advance(); // Skip second closing quote
+                    advance(); // Skip third closing quote
+                    break;
+                }
+                str += current();
+                advance();
+            }
+            addToken(str, TokenType::STRING);
+        } else {
+            // Process a normal string literal that should not contain newlines
+            while (current() != quote && current() != '\0') {
+                if (current() == '\n') { // Unterminated error for standard strings
+                    addError("Unterminated string literal starting at line " +
+                             to_string(startLine) + " column " + to_string(startColumn));
+                    // Optionally skip to end of line
+                    while (current() != '\n' && current() != '\0') {
+                        advance();
+                    }
+                    return;
+                }
+                if (current() == '\\') {
+                    advance();
+                    if (current() == '\0') break;
+                }
+                str += current();
+                advance();
+            }
+
+            if (current() != quote) {
+                addError("Unterminated string literal starting at line " +
+                         to_string(startLine) + " column " + to_string(startColumn));
+                return;
+            }
+            advance();  // Consume closing quote
+            addToken(str, TokenType::STRING);
+        }
+    }
+
+    void processIdentifier() {
+        string ident;
+
+        // Enhanced validation: identifiers must not start with a digit or an underscore followed by a digit.
+        if (isdigit(current())) {
+            string invalid;
+            while (isalnum(current()) || current() == '_') {
+                invalid += current();
+                advance();
+            }
+            addError("Invalid identifier starts with digit: " + invalid);
+            return;
+        }
+
+        // Check for underscores at the beginning followed by a digit (e.g., _9)
+        if (current() == '_') {
+            string invalid;
+            invalid += current();
+            advance();
+            if (isdigit(current())) {
+                invalid += current();
+                advance();
+                addError("Invalid number starts with _: " + invalid);
+                return;
+            }
+        }
+
+        // Process the valid identifier
+        while (isalnum(current()) || current() == '_') {
+            ident += current();
+            advance();
+        }
+
+        if (keywords.count(ident)) {
+            addToken(ident, TokenType::KEYWORD);
+        } else {
+            symbolTable.addIdentifier(ident, line);
+            addToken(ident, TokenType::IDENTIFIER);
+        }
+    }
+
+    void processOperator() {
+        string op(1, current());
+        const char next = peek();
+
+        const vector<pair<char, char>> multiOps = {
+            {'=', '='}, {'!', '='}, {'<', '='}, {'>', '='},
+            {'+', '='}, {'-', '='}, {'*', '='}, {'/', '='},
+            {'%', '='}, {'&', '&'}, {'|', '|'}, {'*', '*'},
+            {'/', '/'}, {'-', '>'}
+        };
+
+        for (const auto& [c1, c2] : multiOps) {
+            if (current() == c1 && next == c2) {
+                op += c2;
+                advance();
+                break;
+            }
+        }
+
+        advance();
+        addToken(op, TokenType::OPERATOR);
+    }
+
+public:
+    PythonLexer(const string& input) : source(input) {}
+
+    pair<vector<Token>, vector<LexicalError>> tokenize() {
+        while (current() != '\0') {
+            if (current() == '\n') {
+                addToken("\n", TokenType::NEWLINE);
+                advance();
+                continue;
+            }
+            else if (isspace(current())) {
+                // Skip other whitespace characters (spaces, tabs)
+                advance();
+                continue;
+            }
+            else if (isdigit(current())) {
+                processNumber();
+                continue;
+            }
+            else if (isalpha(current()) || current() == '_') {
+                processIdentifier();
+                continue;
+            }
+            else if (current() == '"' || current() == '\'') {
+                processString(current());
+                continue;
+            }
+            else if (isOperatorChar(current())) {
+                processOperator();
+                continue;
+            }
+            else if (isDelimiter(current())) {
+                addToken(string(1, current()), TokenType::DELIMITER);
+                advance();
+                continue;
             }
             else {
-                token += ""; // continue collecting spaced token
+                addError("Unexpected character: " + string(1, current()));
+                advance();
             }
-            i++;
         }
-        else {
-            token += input[i];
-            i++;
-        }
-    }
 
-    // Handle last token
-    if (!token.empty()) {
-        if (isKeyword(token)) {
-            cout << token << " : is a Keyword" << endl;
-        }
-        else if (isNumber(token)) {
-            cout << token << " : is a Number" << endl;
-        }
-        else if (validIdentifier(token)) {
-            cout << token << " : is a valid Identifier" << endl;
-            insertToSymbolTable(token);
-        }
-        else {
-            cout << token << " : is not a valid Identifier" << endl;
-        }
+        addToken("", TokenType::ENDOFFILE);
+        return {tokens, errors};
     }
-
-    // Print Symbol Table
-    cout << "\nSymbol Table:\n";
-    int id = 1;
-    for (const auto& sym : symbolTable) {
-        cout << setw(2) << id++ << "  " << sym << endl;
-    }
-}
+};
 
 int main() {
-    string input;
-    cout << "Enter your code: ";
-    getline(cin, input);
-    parse(input);
+    ifstream file("Project/test.py");
+    if (!file) {
+        cerr << "Could not open file!" << endl;
+        return 1;
+    }
+
+    stringstream buffer;
+    buffer << file.rdbuf();
+    string input = buffer.str();
+
+    PythonLexer lexer(input);
+    auto [tokens, errors] = lexer.tokenize();
+
+    // Print tokens
+    for (const auto& token : tokens) {
+        cout << "Token: " << token.lexeme << " (" << static_cast<int>(token.type) << ") at " << token.line << ":" << token.column << endl;
+    }
+
+    // Print errors
+    for (const auto& error : errors) {
+        cout << "Error: " << error.message << " at " << error.line << ":" << error.column << endl;
+    }
+
     return 0;
 }
