@@ -1,2 +1,2 @@
 # Compilers-Project
-Lexical and symantic analyzer for Python Language 
+Lexical and Syntax analyzer for Python Language 
